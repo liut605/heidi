@@ -1,3 +1,20 @@
+/** Pull assistant text from POST /v1/responses JSON (raw REST has no output_text helper). */
+function extractResponsesOutputText(data) {
+  const out = data?.output;
+  if (!Array.isArray(out)) return "";
+
+  const parts = [];
+  for (const item of out) {
+    if (item.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const block of item.content) {
+      if (block.type === "output_text" && typeof block.text === "string") {
+        parts.push(block.text);
+      }
+    }
+  }
+  return parts.join("\n\n");
+}
+
 export default async function handler(req, res) {
   // ✅ CORS headers so Webflow can call it
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -44,10 +61,26 @@ Return as plain text or JSON
 
     const data = await response.json();
 
-    // Safely extract output text
-    const text = data.output?.[0]?.content?.[0]?.text || "";
+    if (!response.ok) {
+      const msg =
+        data?.error?.message ||
+        data?.error?.code ||
+        "OpenAI request failed";
+      console.error("OpenAI error:", data?.error ?? data);
+      return res.status(response.status).json({ error: msg });
+    }
 
-    // Return a single field, compatible with simplified result div
+    // Responses API: do not assume text is at output[0] (reasoning/tool items may come first).
+    // Walk all message items and aggregate output_text blocks.
+    const text = extractResponsesOutputText(data);
+
+    if (!text) {
+      console.error("Empty model output; raw keys:", Object.keys(data), "output:", data.output);
+      return res.status(502).json({
+        error: "Model returned no text. Check server logs for the raw response shape.",
+      });
+    }
+
     res.status(200).json({ output: text });
   } catch (err) {
     console.error(err);
