@@ -1,4 +1,14 @@
 export default async function handler(req, res) {
+  // ✅ ADD THIS (CORS)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // ✅ HANDLE PREFLIGHT
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -11,7 +21,6 @@ export default async function handler(req, res) {
 
   1. Rewrite using professional medical jargon
   2. Translate into plain, patient-friendly language
-  Return JSON
   `;
 
   try {
@@ -28,9 +37,14 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
-    const text = data.output[0].content[0].text;
-    res.status(200).json(data);
+
+    const text = data.output?.[0]?.content?.[0]?.text || "";
+
+    return res.status(200).json({
+      output: text,
+    });
   } catch (error) {
-    res.status(500).json({ error: "Failed to translate" });
+    console.error(error);
+    return res.status(500).json({ error: "Failed to translate" });
   }
 }
