@@ -1,32 +1,22 @@
-/** Pull assistant text from POST /v1/responses JSON (raw REST has no output_text helper). */
-function extractResponsesOutputText(data) {
-  const out = data?.output;
-  if (!Array.isArray(out)) return "";
-
-  const parts = [];
-  for (const item of out) {
-    if (item.type !== "message" || !Array.isArray(item.content)) continue;
-    for (const block of item.content) {
-      if (block.type === "output_text" && typeof block.text === "string") {
-        parts.push(block.text);
-      }
-    }
-  }
-  return parts.join("\n\n");
+/** Concatenate text from Gemini generateContent response. */
+function extractGeminiText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export default async function handler(req, res) {
-  // ✅ CORS headers so Webflow can call it
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // ✅ Handle preflight OPTIONS
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
-  // Only allow POST
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -35,6 +25,12 @@ export default async function handler(req, res) {
 
   if (!patientInfo || !consultReason) {
     return res.status(400).json({ error: "Missing input" });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    console.error("Missing GEMINI_API_KEY (or GOOGLE_API_KEY) env var");
+    return res.status(500).json({ error: "Server misconfiguration" });
   }
 
   const prompt = `
@@ -46,16 +42,18 @@ Reason: ${consultReason}
 Return as plain text or JSON
 `;
 
+  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
+        "X-goog-api-key": apiKey,
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: prompt,
+        contents: [{ parts: [{ text: prompt }] }],
       }),
     });
 
@@ -64,20 +62,23 @@ Return as plain text or JSON
     if (!response.ok) {
       const msg =
         data?.error?.message ||
-        data?.error?.code ||
-        "OpenAI request failed";
-      console.error("OpenAI error:", data?.error ?? data);
-      return res.status(response.status).json({ error: msg });
+        data?.error?.status ||
+        "Gemini request failed";
+      console.error("Gemini error:", data?.error ?? data);
+      return res.status(response.status >= 400 ? response.status : 502).json({
+        error: msg,
+      });
     }
 
-    // Responses API: do not assume text is at output[0] (reasoning/tool items may come first).
-    // Walk all message items and aggregate output_text blocks.
-    const text = extractResponsesOutputText(data);
+    const text = extractGeminiText(data);
 
     if (!text) {
-      console.error("Empty model output; raw keys:", Object.keys(data), "output:", data.output);
+      const block = data?.promptFeedback?.blockReason;
+      const finish = data?.candidates?.[0]?.finishReason;
+      console.error("Empty Gemini output", { block, finish, data });
       return res.status(502).json({
-        error: "Model returned no text. Check server logs for the raw response shape.",
+        error:
+          "Model returned no text (safety block or empty response). Check server logs.",
       });
     }
 
