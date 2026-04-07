@@ -39,7 +39,7 @@ Reason: ${consultReason}
 
 1. Rewrite using professional medical jargon
 2. Translate into plain, patient-friendly language
-Return as plain text or JSON
+Return as plain text with no mardown fomatting
 `;
 
   const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
@@ -61,9 +61,7 @@ Return as plain text or JSON
 
     if (!response.ok) {
       const msg =
-        data?.error?.message ||
-        data?.error?.status ||
-        "Gemini request failed";
+        data?.error?.message || data?.error?.status || "Gemini request failed";
       console.error("Gemini error:", data?.error ?? data);
       return res.status(response.status >= 400 ? response.status : 502).json({
         error: msg,
